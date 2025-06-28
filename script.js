@@ -5,15 +5,20 @@ function generateRoomId() {
 
 function joinRoom() {
   const roomId = document.getElementById("room-id").value.trim();
+
   if (roomId === "") {
     alert("Please enter or generate a room ID.");
     return;
   }
 
+  // Show room ID text
   document.getElementById("room-display").style.display = "block";
   document.getElementById("show-room-id").textContent = roomId;
-  document.querySelector(".game-selection").style.display = "block";
 
+  // Show game selection area
+  document.getElementById("game-selection").style.display = "block";
+
+  // Save room ID for later
   localStorage.setItem("room-id", roomId);
 }
 
