@@ -1,0 +1,172 @@
+// ===== File: server.js =====
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+const PORT = process.env.PORT || 3000;
+
+app.use(express.static("public"));
+
+const games = {}; // { roomId: { players: [], gameState: {} } }
+
+io.on("connection", (socket) => {
+  socket.on("create-room", (roomId) => {
+    if (!games[roomId]) {
+      games[roomId] = { players: [socket.id], gameState: {} };
+      socket.join(roomId);
+      socket.emit("room-created", roomId);
+    }
+  });
+
+  socket.on("join-room", (roomId) => {
+    const game = games[roomId];
+    if (game && game.players.length < 2) {
+      game.players.push(socket.id);
+      socket.join(roomId);
+      socket.emit("room-joined", roomId);
+      io.to(roomId).emit("start-game", roomId);
+    } else {
+      socket.emit("room-full");
+    }
+  });
+
+  socket.on("move", ({ roomId, data }) => {
+    socket.to(roomId).emit("opponent-move", data);
+  });
+
+  socket.on("disconnecting", () => {
+    const rooms = [...socket.rooms];
+    rooms.forEach((roomId) => {
+      if (games[roomId]) {
+        io.to(roomId).emit("player-left");
+        delete games[roomId];
+      }
+    });
+  });
+});
+
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
+// ===== File: public/index.html =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Multiplayer Game Site</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script defer src="main.js"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #f0f0f0; }
+    #game { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Play With Friend 🎮</h1>
+  <input id="roomId" placeholder="Room ID" />
+  <button onclick="createRoom()">Create Game</button>
+  <button onclick="joinRoom()">Join Game</button>
+
+  <div id="status"></div>
+  <div id="game" style="display:none">
+    <p id="turn"></p>
+    <table id="board"></table>
+  </div>
+</body>
+</html>
+
+
+// ===== File: public/main.js =====
+const socket = io();
+let roomId = "";
+let isMyTurn = true;
+
+function createRoom() {
+  roomId = document.getElementById("roomId").value;
+  socket.emit("create-room", roomId);
+}
+
+function joinRoom() {
+  roomId = document.getElementById("roomId").value;
+  socket.emit("join-room", roomId);
+}
+
+socket.on("room-created", () => {
+  document.getElementById("status").innerText = "Room created. Waiting for player...";
+});
+
+socket.on("room-joined", () => {
+  document.getElementById("status").innerText = "Joined room. Waiting for game to start...";
+});
+
+socket.on("start-game", () => {
+  document.getElementById("status").innerText = "Game started!";
+  startGame();
+});
+
+socket.on("room-full", () => {
+  document.getElementById("status").innerText = "Room is full.";
+});
+
+socket.on("player-left", () => {
+  alert("Your opponent left the game.");
+  location.reload();
+});
+
+function startGame() {
+  document.getElementById("game").style.display = "block";
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement("tr");
+    for (let j = 0; j < 3; j++) {
+      const cell = document.createElement("td");
+      cell.textContent = "";
+      cell.style.width = "60px";
+      cell.style.height = "60px";
+      cell.style.border = "1px solid #333";
+      cell.style.fontSize = "30px";
+      cell.addEventListener("click", () => handleClick(cell));
+      row.appendChild(cell);
+    }
+    board.appendChild(row);
+  }
+}
+
+function handleClick(cell) {
+  if (!isMyTurn || cell.textContent !== "") return;
+  cell.textContent = "X";
+  socket.emit("move", { roomId, data: getBoardState() });
+  isMyTurn = false;
+  document.getElementById("turn").innerText = "Opponent's turn...";
+}
+
+function getBoardState() {
+  const board = [];
+  document.querySelectorAll("#board tr").forEach(row => {
+    const rowData = [];
+    row.querySelectorAll("td").forEach(cell => {
+      rowData.push(cell.textContent);
+    });
+    board.push(rowData);
+  });
+  return board;
+}
+
+function setBoardState(board) {
+  const rows = document.querySelectorAll("#board tr");
+  board.forEach((row, i) => {
+    row.forEach((cell, j) => {
+      rows[i].children[j].textContent = cell;
+    });
+  });
+}
+
+socket.on("opponent-move", (board) => {
+  setBoardState(board);
+  isMyTurn = true;
+  document.getElementById("turn").innerText = "Your turn!";
+});
